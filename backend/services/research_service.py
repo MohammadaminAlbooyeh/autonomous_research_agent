@@ -1,10 +1,14 @@
-from datetime import datetime, timezone
+import asyncio
+import time
 from sqlalchemy.orm import Session, joinedload
 from backend.models.research_task import ResearchTask, Source, Finding
 from backend.models.report import Report
 from backend.models.database import SessionLocal
 from backend.agents.research_agent import ResearchAgent
 from backend.services.cache_service import CacheService
+from backend.analytics import get_analytics
+from backend.monitoring import record_research_task, set_active_tasks
+from backend.webhooks import get_webhook_manager, WebhookEventType
 
 
 class ResearchService:
@@ -14,11 +18,21 @@ class ResearchService:
 
     def create_task(self, topic: str, depth: str = "medium") -> ResearchTask:
         db = SessionLocal()
+        analytics = get_analytics()
+        started_at = time.time()
         try:
             task = ResearchTask(topic=topic, depth=depth, status="pending")
             db.add(task)
             db.commit()
             db.refresh(task)
+            analytics.record_task_started(task.id, "system", topic, depth)
+            set_active_tasks(1)
+            self._dispatch_webhook_event(WebhookEventType.RESEARCH_STARTED.value, {
+                "task_id": task.id,
+                "topic": topic,
+                "depth": depth,
+                "status": "in_progress",
+            })
 
             task.status = "in_progress"
             db.commit()
@@ -60,15 +74,35 @@ class ResearchService:
                 task.progress = 1.0
                 task.queries = result.get("queries", [])
                 db.commit()
+                duration = time.time() - started_at
+                analytics.record_task_completed(task.id, len(result.get("findings", [])), len(result.get("sources", [])))
+                record_research_task("completed", duration, len(result.get("sources", [])), len(result.get("findings", [])))
+                self._dispatch_webhook_event(WebhookEventType.RESEARCH_COMPLETED.value, {
+                    "task_id": task.id,
+                    "topic": topic,
+                    "status": "completed",
+                    "findings_count": len(result.get("findings", [])),
+                    "sources_count": len(result.get("sources", [])),
+                })
 
             except Exception as e:
                 task.status = "failed"
                 task.error = str(e)
                 db.commit()
+                duration = time.time() - started_at
+                analytics.record_task_failed(task.id, str(e))
+                record_research_task("failed", duration, 0, 0)
+                self._dispatch_webhook_event(WebhookEventType.RESEARCH_FAILED.value, {
+                    "task_id": task.id,
+                    "topic": topic,
+                    "status": "failed",
+                    "error": str(e),
+                })
 
             db.refresh(task)
             return task
         finally:
+            set_active_tasks(0)
             db.close()
 
     def get_task(self, task_id: str) -> ResearchTask:
@@ -111,3 +145,14 @@ class ResearchService:
             return False
         finally:
             db.close()
+
+    def _dispatch_webhook_event(self, event_type: str, data: dict) -> None:
+        manager = get_webhook_manager()
+        try:
+            asyncio.run(manager.trigger_event(event_type, data))
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(manager.trigger_event(event_type, data))
+            else:
+                loop.run_until_complete(manager.trigger_event(event_type, data))

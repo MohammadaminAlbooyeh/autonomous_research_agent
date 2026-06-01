@@ -2,7 +2,7 @@ import time
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -11,7 +11,11 @@ from slowapi.middleware import SlowAPIMiddleware
 from backend.models.database import init_db
 from backend.api.routes import router
 from backend.api.auth_routes import router as auth_router
+from backend.api.webhooks_routes import webhook_router, analytics_router
 from backend.logging_config import get_logger
+from backend.waf import WAFMiddleware
+from backend.monitoring import MetricsMiddleware, get_metrics, record_rate_limit
+from prometheus_client import CONTENT_TYPE_LATEST
 
 logger = get_logger(__name__)
 
@@ -37,6 +41,7 @@ app.state.limiter = limiter
 
 
 def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    record_rate_limit(request.url.path)
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded"}
@@ -44,6 +49,12 @@ def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse
 
 
 app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
+
+# Add WAF middleware
+app.add_middleware(WAFMiddleware)
+
+# Add metrics middleware
+app.add_middleware(MetricsMiddleware)
 
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
@@ -71,6 +82,14 @@ async def log_requests(request: Request, call_next):
 
 app.include_router(router)
 app.include_router(auth_router)
+app.include_router(webhook_router)
+app.include_router(analytics_router)
+
+
+@app.get("/metrics")
+def prometheus_metrics():
+    """Prometheus metrics endpoint."""
+    return Response(content=get_metrics(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health")
