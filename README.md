@@ -1,82 +1,69 @@
-# Crypto Price Tracker
+# Autonomous Research Agent
 
-A simple project to track Bitcoin prices.
+A multi-agent research system that autonomously searches the web, analyzes content, verifies facts, and generates structured research reports.
 
-## Requirements
-- Python 3.8+
-- See [requirements.txt](requirements.txt)
+## Architecture
 
-## Installation
-1. (Optional) Create and activate a virtual environment:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
+```
+User Input → ResearchAgent → WebSearcher → WebScraper → ContentAnalyzer → FactChecker → ReportGenerator → Report
 ```
 
-2. Install dependencies:
+### Components
+
+- **Backend**: Python/FastAPI with SQLAlchemy, SQLite/PostgreSQL
+- **Frontend**: React 18 with Vite
+- **Agents**: Research orchestrator, web searcher, content analyzer, fact checker, report generator
+- **Tools**: Google Search, web scraper, summarizer, citation manager, comparison engine, document parser
+
+## Quick Start
+
+### Backend
 
 ```bash
 pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your API keys (optional - works with mock data)
+uvicorn backend.main:app --reload
 ```
 
-## Usage
-- Run the command below from the project root to start the tracker:
+### Frontend
 
 ```bash
-python3 src/main.py
+cd frontend
+npm install
+npm run dev
 ```
 
-- To run the optional UI (if provided), run:
+### API
+
+The API runs at `http://localhost:8000`. Key endpoints:
+
+- `POST /api/research` - Start research: `{"topic": "...", "depth": "shallow|medium|deep"}`
+- `GET /api/research` - List all tasks
+- `GET /api/research/{id}` - Get task details with sources, findings, report
+- `GET /api/research/{id}/report` - Get report
+- `GET /api/research/{id}/report/export?format=markdown|text` - Export report
+- `GET /api/research/stats` - System statistics
+
+### Docker
 
 ```bash
-python3 src/ui.py
+docker compose up
 ```
 
-## Notes
-- The project dependencies are listed in [requirements.txt](requirements.txt).
-- If you prefer, install into your system Python (not recommended) using the same `pip` command above.
+## Configuration
 
-# API Documentation
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `OPENAI_API_KEY` | For LLM-powered summarization & reports | No |
+| `GOOGLE_API_KEY` | For real web search results | No |
+| `GOOGLE_CX` | Google Custom Search Engine ID | No |
+| `DATABASE_URL` | Database connection string | No (defaults to SQLite) |
 
-## Endpoints
+Without API keys, the system uses mock data and heuristic algorithms.
 
-### `/price`
-- **Method**: GET
-- **Description**: Get current prices for specified cryptocurrencies in USD.
-- **Query Parameters**:
-  - `ids` (string, optional): Comma-separated list of cryptocurrency IDs. Default: `bitcoin,ethereum`.
-- **Response**:
-  ```json
-  {
-    "bitcoin": {"price": 45000, "change_24h": 2.5},
-    "ethereum": {"price": 3000, "change_24h": -1.2}
-  }
-  ```
+## Testing
 
-### `/price/history/{coin}`
-- **Method**: GET
-- **Description**: Get price history for a specific cryptocurrency for the last N days.
-- **Path Parameters**:
-  - `coin` (string): Cryptocurrency ID.
-- **Query Parameters**:
-  - `days` (integer, optional): Number of days. Default: 7.
-- **Response**:
-  ```json
-  {
-    "prices": [[timestamp, price], ...]
-  }
-  ```
-
-### `/exchange-rate`
-- **Method**: GET
-- **Description**: Get exchange rate between two currencies.
-- **Query Parameters**:
-  - `base` (string, optional): Base currency. Default: `usd`.
-  - `target` (string, optional): Target currency. Default: `eur`.
-- **Response**:
-  ```json
-  {
-    "rate": 0.85
-  }
-  ```
+```bash
+pytest tests/ -v
+```
